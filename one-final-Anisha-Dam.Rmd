@@ -1,0 +1,692 @@
+---
+title: "Frequency Analysis in Automobile Insurance"
+author: "Anisha Dam"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+  html_notebook:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+---
+
+```{r load-libraries, echo = FALSE, include=FALSE, message=FALSE, warning=FALSE}
+library(MASS)
+library(plyr)
+library(tidyverse)
+library(ggplot2)
+library(ggrepel)
+```
+```{r, echo=FALSE, include=FALSE}
+auto_ins = read.table("auto-ins.tsv",header=TRUE)
+auto_ins$claim = as.factor(auto_ins$claim)
+str(auto_ins)
+```
+
+```{r pearson-chi-squared-statistic-definition, echo=FALSE, include=FALSE}
+pearson <- function(fit){
+  ans <- sum((fit$y - fit$fitted.values)^2 / fit$fitted.values)
+  return(ans)
+}
+```
+
+```{r dispersion-statistic-definition, echo=FALSE, include=FALSE}
+dispersion <- function(fit) {
+  ans <- pearson(fit) / fit$auto_ins.residual
+  return(ans)
+}
+```
+
+```{r type-3-error-function-definition, echo = FALSE, include=FALSE}
+type3error <- function(fit){
+  variables <- as.character(attr(fit$terms, "variables"))[-1]
+  target <- variables[1]
+  predictors <- variables[-1]
+  n <- length(predictors)
+  dof <- numeric(n)
+  names(dof) <- predictors
+  dev <- numeric(n)
+  names(dev) <- predictors
+  for(v in predictors) {
+    vrs <- setdiff(predictors, v)
+    trms <- paste(paste(vrs, collapse = " + "), v, sep = " + ")
+    fmla <- formula(paste(target, trms, sep = " ~ "))
+    f <- glm(fmla, 
+             data = auto_ins,
+             family = poisson(link = "log"),
+             offset = log(exposure))
+    av <- anova(f)
+    dof[v] <- av[nrow(av), 1]
+    dev[v] <- av[nrow(av), 2]
+  }
+  prchisq <- 1 - pchisq(dev, dof)
+  o <- order(prchisq)
+  ans <- cbind(dof, deviance = round(dev, 2), "Pr(>Chi)" = round(prchisq,4))[o,]
+  return(ans)
+}
+```
+
+# Abstract
+
+This report studies the relationship between the frequency of third-party automobile claims and potential explanatory variables such as policyholder attributes, geographic information, and vehicle characteristics. The Poisson regression model was used to fit the best model. To pick the best model, we had to understand each variable and whether or not each variable is significant by conducting different data analysis techniques such as computing the Pearson statistics and using the Akaike Information Criterion. Our main finding was that age enters as a second-degree polynomial.  Other important variables were: gender, region, and all vehicle variables. The techniques used and the importance of these determinants give helpful insights about the modern drivers today and the number of claims they have.
+
+  
+# Introduction
+
+According to **Investopedia**, a claim is a "formal request by a policyholder to an insurance company for coverage or compensation for a covered loss or policy event. The insurance company validates the claim and, once approved, issues payment to the insured or an approved interested party on behalf of the insured". In this data set, we have captured claim activity and various characteristics about the policyholder (age, gender, marital status) and the vehicle involved (body type, use, age). Vehicle use and the type of vehicle being used can be useful especially in today's driving world. With the increase of technology and the establishment of self-driving cars, there is a potential that fewer claims could be filed in the years to come. The outline of the rest of the report is as follows. In Section two, we will present the most important characteristics of the data. The next section represents a discussion of the selected model. Concluding remarks can be found in the fourth section along with the many details of the analysis in the appendix. 
+
+
+# Data Characteristics
+
+The data are cross-sectional with a total of `r prettyNum(nrow(auto_ins), big.mark = ",")` observations and the target variable we will be predicting is the number of claims the policyholder has had. There are 11 variables describing
+vehicle, policyholder, and claim characteristics. There was also a geographic variable (`region`).
+
+
+The following table shows the variables available and their
+definitions.
+
+| Item | Variable      | Definition                                           |
+|-----:|:--------------|:-----------------------------------------------------|
+|  1   | Exposure      | The length of time the policy was in-force           |
+|  2   | Age           | Age of policyholder in years                         |
+|  3   | Num Claims    | The number of claims during the policy period        |
+|  4   | Education     | Number of years of education                         |
+|  5   | Marital Status| Civil status of the policyholder                     |
+|  6   | Gender        | Gender of the policyholder                           |
+|  7   | Region        | Geographic area where vehicle is located             |
+|  8   | Vehicle Age   | The age of the vehicle (in bands)                    |
+|  9   | Vehicle Body  | The type of vehicle (e.g. sedan, station wagon, ...) |
+| 10   | Vehicle Use   | The type of use of the vehicle                       |
+| 11   | Claim         | Whether or not a claim occurred                      |
+
+In the following table, summary statistics were given for the quantitative variables: claims, age, education and vehicle age.
+
+| Variables   | Min      | 1st Quartile     | 3rd Quartile     | Max     | Mean | Median |
+|------------:|---------:|-----------------:|-----------------:|--------:|-----:|-------:|
+| Claims      | 0        | 0                | 0                | 5       | 0.101| 0      |
+| Age         | 17       | 26               | 43               | 75      | 36.2 | 33     |
+| Education   | 12       | 16               | 18               | 22      | 16.98| 16     |
+| Vehicle Age | 0        | 3                | 9                | 25      | 7.35 | 6      |
+
+In the following table, information was given for the categorical variables: gender, marital status, region, vehicle body and vehicle use.
+
+| Variables     | Number of Levels | Values                                                   |      
+|--------------:|-----------------:|---------------------------------------------------------:|
+| Gender        | 2                | Female - 5900, Male - 4100                               | 
+| Marital Status| 2                | Married - 8067, Single - 1933                            | 
+| Region        | 8                | Lakeview - 2101, Warrendale - 1676, Bleachery - 1258,etc.| 
+| Vehicle Body  | 8                | SUV - 2565, Sedan - 1926, Minibus-810, etc.              | 
+| Vehicle Use   | 3                | Business - 912, Commute - 5429, Private - 3659           |
+
+Note that the variables: exposure and claim were not in the tables. Exposure is a control variable and claim is something that is known only in the future.  It is not known at the time someone buys a policy so it cannot be used in the model.
+
+The number of claims ranges from 0 to 5 with the vast majority of entries being zero. 
+Exposure to risk ranges from 0 to 1. The mean is at 90% and so most records were exposed for an entire year. 
+Age ranges from 17 to 75 which is a reasonable set of ages.
+Our data has more females than males. Almost 60% female, 40% male.
+Most records indicate Married (80%). 
+Education variable ranges from 12 to 22. 
+Vehicle ages range from 0 to 25. The mean and median are close to each other at 6 and 7 years.
+We have 8 different types of vehicle.body.
+For vehicle.use most records are commute and very few are business. We may need to group together business and commute (which are sort of similar categories).
+
+Since we are modeling the number of claims but not everyone was exposed to risk for an equal amount of time we need to adjust for exposure. The empirical frequency is computed below with a value of 11.3%.
+
+```{r empirical-frequency}
+with(auto_ins, sum(claims)/sum(exposure))
+```
+
+The following tables give the claim count, total exposure and the empirical frequency for each value of each variable.
+
+
+Policyholders who are between the ages 17 and 22 have a higher claim count than policyholders who are in their early 60s. This table shows a spread of
+about 23 percentage points between the lowest and highest frequencies so there is a lot of variability in frequency. So age could be a could variable to put in the model.
+```{r age-frequency , echo=FALSE}
+auto_ins %>%
+  group_by(age) %>%
+  summarise(clms = sum(claims),
+            expo = sum(exposure),
+            freq = clms / expo) %>%
+  arrange(desc(freq))
+```
+
+Policyholders with 12 years of education have the highest claim count of 280 claims. There is a spread of about 2 percentage points so there is not much variability in frequency which can indicate that education may not be a good variable to put in the model.
+
+```{r education-frequency , echo=FALSE}
+auto_ins %>%
+  group_by(education) %>%
+  summarise(clms = sum(claims),
+            expo = sum(exposure),
+            freq = clms / expo) %>%
+  arrange(desc(freq))
+```
+
+Male policyholders have a higher claim count than female policyholders and there is a spread of about 4 percentage points so gender could be a good variable to put in the model.
+
+```{r gender-frequency , echo=FALSE}
+auto_ins %>%
+  group_by(gender) %>%
+  summarise(clms = sum(claims),
+            expo = sum(exposure),
+            freq = clms / expo) %>%
+  arrange(desc(freq))
+```
+
+The following table shows the number of vehicles garaged in specific regions.
+Most of the vehicles were garaged in Lakeview and the least of the vehicles were garaged in Banks Square. A table of frequencies by geographic region shows a spread of
+about 4 percentage points between the lowest and highest frequencies.
+```{r region-frequency, echo=FALSE}
+auto_ins %>%
+  group_by(region) %>%
+  summarise(clms = sum(claims),
+            expo = sum(exposure),
+            freq = clms / expo) %>%
+  arrange(desc(freq))
+```
+
+The following table shows the number of vehicles associated with each type.
+The most popular vehicle type used is an SUV and the least popular is a Roadster. The type of vehicle might also be a good predictor but not all categories seem relevant. The frequencies range from 6.5% to approximately 15%.
+
+```{r vehicle-body-frequency, echo=FALSE}
+auto_ins %>%
+  group_by(vehicle.body) %>%
+  summarise(clms = sum(claims),
+            expo = sum(exposure),
+            freq = clms / expo) %>%
+  arrange(desc(freq))
+```
+
+Vehicles used for commuting have the highest claim count and vehicles used for business have the lowest claim count. The frequencies for business and commute are almost the same of 14% and the frequency for private is approximately 7%. So since there is some variability in among all the factors, vehicle use could be a good predictor of business and commute were grouped together.
+
+```{r vehicle use-frequency , echo=FALSE}
+auto_ins %>%
+  group_by(vehicle.use) %>%
+  summarise(clms = sum(claims),
+            expo = sum(exposure),
+            freq = clms / expo) %>%
+  arrange(desc(freq))
+```
+
+Vehicles which are 12 years old have the highest claim count and vehicles which are 23 years old have the lowest claim count. The frequencies range from approximately 7% to 18% so there is a lot of variability in frequency so vehicle age could be a could predictor.
+
+```{r vehicle age-frequency , echo=FALSE}
+auto_ins %>%
+  group_by(vehicle.age) %>%
+  summarise(clms = sum(claims),
+            expo = sum(exposure),
+            freq = clms / expo) %>%
+  arrange(desc(freq))
+```
+
+Single policyholders have a lower claim count than married policyholders and the spread shows that the frequencies differ from 11.2% to 11.9% so there is not much variability. Marital status may not be a good predictor.
+
+```{r maritalstatus-frequency , echo=FALSE}
+auto_ins %>%
+  group_by(marital.status) %>%
+  summarise(clms = sum(claims),
+            expo = sum(exposure),
+            freq = clms / expo) %>%
+  arrange(desc(freq))
+```
+
+
+In the data set the exposure to risk ranges from 1 month to a full year.
+The average exposure length is just shy of ten and a half months at 
+`r round(mean(auto_ins$exposure),3)*100`% of a whole year.
+The following histogram shows the distribution of exposure.
+
+```{r exposure-histogram, message=FALSE}
+ggplot(auto_ins) + 
+  geom_histogram(aes(x = exposure)) +
+  labs(x = "Exposure")
+```
+
+Almost 8000 policyholders have an exposure of a full year.
+
+
+The following table shows the number of vehicles for vehicle usage.
+```{r echo=FALSE}
+count_veh = auto_ins$vehicle.use
+plyr::count(count_veh)
+```
+
+The majority of the vehicle usage is for commuting which makes sense since many people use cars to go anywhere whether it be to work or school. The people who used the car for business could have been people with higher levels of education and more wealthier than the average commuter. Therefore the people who used the vehicle for business could have been more careful when driving since cars used for business trips tend to be more expensive and so the driver would have been more careful and would have had less claims.
+
+In the appendix, a box plot shows vehicle usage along with the years of education of the policyholders and it shows that policyholders with more years of education primarily used the vehicle for business rather than for commuting or for private usage.
+
+
+Besides the variables given in the data, other variables are created in order to fit the potential model. A categorical variable named age_group is created to show the number of young, middle and old drivers there were based on the variable age.
+
+```{r}
+bks <- seq(16, 77, by = 6)
+lbs <- c("17-22", "23-28", "29-34", "35-40", "40-46",
+         "47-52", "53-58", "59-64", "65-70","71-75")
+age_group <- cut(auto_ins$age, breaks = bks, labels = lbs)
+rm(bks, lbs)
+auto_ins$age_group = age_group
+```
+
+Middle aged drivers consist of the age groups: 35-40, 40-46 and 47-52. Old aged drivers consist of the age groups: 53-58, 59-64, 65-70 and 71-75. The rest are all young drivers.
+In the appendix, a bar plot is shown where the data encompassed a majority of drivers who range from 29-34 and the least amount of drivers who range from 71-75.
+
+In general we expect age and education to be strongly related. The older one is the more education one has so a table was created to see whether or not there was a relationship between age and the number of years of education.
+```{r, echo=FALSE}
+with(auto_ins, table(age_group, education))
+```
+Education does not seem like a reliable variable because it does not make sense if 297 people have 22 years of education if they are in the age group of 17-22.
+
+A variable named education level was created to show how many people attended high school, college for a bachelors degree, college for a master's degree and for a PhD. In the appendix, a bar plot is shown where the data represented a more or less equal distribution of education levels. However, the bar plot showed that most people had a bachelors degree.
+```{r}
+education_level <- cut(auto_ins$education,breaks = c(0,13,17,19,30),labels = c("Highschool","Bachelors","Masters","Phd"))
+auto_ins$education_level = education_level
+```
+
+As mentioned above, the empirical frequency differs in about 4 percentage points so region could be a significant variable in the final model but not all region categories seem important. So only six out of the eight region categories are used to group together the regions. Banks Square and Highlands are not grouped because the total exposure for those regions is the least and they do not have a lot of claim counts either. Regions are grouped together by similar empirical frequency percentages so Warrendale and Bleachery are grouped together. The Chemistry and The Lanes are grouped together and Lakeview and Piety Corner are grouped together shown below.
+
+```{r}
+auto_ins$reg.cat <- fct_collapse(auto_ins$region,
+                             WB = c("Warrendale", "Bleachery"),
+                             CL = c("The Chemistry", "The Lanes"),
+                             LP = c("Lakeview", "Piety Corner"))
+```
+
+As mentioned above, vehicle use might be a good predictor. Based on the empirical frequencies for vehicle use, it would have been a good idea to group Business and Commute together which is shown below.
+
+```{r}
+auto_ins <- auto_ins %>%
+    mutate(veh.use = case_when(
+      vehicle.use == "Business" ~ "B&C",
+      vehicle.use == "Commute" ~ "B&C",
+      vehicle.use == "Private" ~ "Prv",
+      TRUE ~ "Other"))
+  auto_ins$veh.use <- factor(auto_ins$veh.use,
+                       levels = c("Prv", "B&C"))
+```
+
+Since vehicle age might be a good predictor, we were curious to see if it would be a better predictor if it was made into a categorical variable shown below. 
+
+```{r}
+auto_ins <- auto_ins %>% 
+    mutate(veh.age = case_when(
+      (vehicle.age > -1 & vehicle.age <  5) ~ "0-4",
+      (vehicle.age >  4 & vehicle.age < 10) ~ "5-9",
+      (vehicle.age >  9 & vehicle.age < 15) ~ "10-14",
+      (vehicle.age > 14 & vehicle.age < 20) ~ "15-19",
+      (vehicle.age > 19 & vehicle.age < 26) ~ "20-25",
+      TRUE ~ "Other"))
+  auto_ins$veh.age <- factor(auto_ins$veh.age,
+                       levels = c("0-4","5-9","10-14","15-19","20-25"))
+```
+
+Overall this data set is fairly strong and high quality because this data set is quite large with 10000 entries and there are `r sum(is.na(auto_ins))` values with NA values which is good. There are also a good number of variables with both quantitative and qualitative data so a lot can be manipulated with this data set for modeling. However the variable, `education` is not a reliable variable so it should not be used in the final model.
+
+# Model Selection & Interpretation
+
+
+The previous section established that there are real patterns
+between the frequency of claims and predictor variables, such
+as `age`, `region`, and `vehicle body` type.  These empirical analyses
+only looked at one variable at a time, but there is clear
+evidence that a model can be constructed to estimate the mean
+frequency based on the variables we have available.
+
+In this section we summarize these patterns using regression
+modeling.  We will also describe the features of the data that
+we used in guiding our selection process.
+
+Based on our investigation of the data, we recommend a Poisson
+regression model using a logarithmic link function to estimate
+the mean frequency. The Poisson distribution was used to model the data because if the response variable was a count variable, such as claims, then the Poisson distribution should be used. An offset equal to the logarithm of `exposure` is necessary to control for the fact that most policyholders are not exposed to risk for the same amount of time.
+To test each variable, the data is partitioned into three sections: Build, Test and validate. The majority of the data is under the build set. For some of the qualitative variables we made tables to compare the frequency percentages among all Build, Test and validate sections. 
+
+```{r build-test-validate-indicator, echo=FALSE}
+set.seed(278931)
+
+# Set an indicator for each observation
+auto_ins$btv <- sample(c(rep("B", 6000), rep("T", 2000), rep("V", 2000)),
+                  10000, replace = FALSE)
+```
+```{r}
+clms <- with(auto_ins, tapply(claims, btv, sum))
+expo <- with(auto_ins, tapply(exposure, btv, sum))
+tbl <- rbind(clms, expo, clms/expo)
+dimnames(tbl) <- list(c("Claims", "Exposure", "Frequency"),
+                      c("Build", "Test", "Validate"))
+round(tbl, 3)
+
+rm(clms, expo, tbl)
+```
+
+Below shows the frequency for the gender variable for the build, test and validate sections. This variable could help differentiate between good and bad drivers. Since females have lower frequency percentages than males throughout the build, test and validate sections, this variable would probably help predict the number of accidents so this would be a good variable to add to the model. Since females have less accidents than males the gender variable can help segment the data into good and bad risks.
+
+```{r frequency-by-gender, echo=FALSE}
+clms <- with(auto_ins, tapply(claims, list(gender, btv), sum))
+expo <- with(auto_ins, tapply(exposure, list(gender, btv), sum))
+freq <- clms/expo
+
+dimnames(freq) <- list(c("Female", "Male"),
+                       c("Build", "Test", "Validate"))
+round(freq, 3)
+
+rm(clms, expo, freq)
+```
+
+The grouped categorical variable of region is used to see how the frequencies vary within the Build, Test and Validate sections. There seems to be a lot of variability in the frequencies for all sections so it will be used in the final model.
+
+```{r frequency-by-region, echo=FALSE}
+clms <- with(auto_ins, tapply(claims, list(reg.cat, btv), sum))
+expo <- with(auto_ins, tapply(exposure, list(reg.cat, btv), sum))
+freq <- clms/expo
+dimnames(freq)[[2]] <- c("Build", "Test", "Validate")
+round(freq*100, 3)
+rm(clms, expo, freq)
+```
+
+Based on the frequency percentages below, people who primary use cars privately have the lowest frequency percentage points among any of the subsets: build, test and validate. So this variable would probably help to predict the number of accidents and it should be included in the final potential model.
+
+```{r frequency-by-vehicleuse, echo=FALSE}
+clms <- with(auto_ins, tapply(claims, list(veh.use, btv), sum))
+expo <- with(auto_ins, tapply(exposure, list(veh.use, btv), sum))
+freq <- clms/expo
+dimnames(freq)[[2]] <- c("Build", "Test", "Validate")
+round(freq*100, 3)
+rm(clms, expo, freq)
+```
+
+Just like the region variable, vehicle.body had a lot of factors. However, based on the frequency percentages below, people who drive the station wagon have the lowest frequency percentage points amongst any of the subsets. So this variable would probably help to predict the number of accidents and it should be included in the final potential model. 
+
+```{r frequency-by-vehiclebody, echo=FALSE}
+clms <- with(auto_ins, tapply(claims, list(vehicle.body, btv), sum))
+expo <- with(auto_ins, tapply(exposure, list(vehicle.body, btv), sum))
+freq <- clms/expo
+dimnames(freq)[[2]] <- c("Build", "Test", "Validate")
+round(freq*100, 3)
+rm(clms, expo, freq)
+```
+
+At first a null model was created with only the intercept but it is not shown in this report. Then each variable was separately put into a single model and finally some variables that seemed significant were put into the final model including some of the variables that were created in the data characteristics section. The standard error was compared with the estimate of each coefficient and if the standard error was too big compared to the estimate, then that variable was not included. Although age seemed like a significant variable, age as a second-degree polynomial was included instead of age. The scatterplot of the deviance of residuals along with age showed that the residuals were not scattered throughout the graph and the least squares line was not a straight line so age was not used.
+
+The final model was fit using an iteratively weighted least squares algorithm and the following tables show the value of the estimated coefficients and their standard errors.
+
+```{r}
+final <- glm(claims ~ poly(age, 2) + gender + reg.cat + veh.use + 
+             veh.age + vehicle.body,
+          data = auto_ins,
+          subset = btv == "B",
+          family = poisson(link = "log"),
+          offset = log(exposure))
+(sfinal <- summary(final))
+```
+
+Note that all of our predictor variables are categorical except for age as a second-degree polynomial.
+From the estimated coefficients, only Station Wagon is significant. It has a negative coefficient which seems reasonable. There are other levels with negative coefficients; namely, Minibus and Sedan. Those are not estimated very precisely, but the signs make sense intuitively.
+
+The coefficient for level Roadster has a high value of about 67% (but is not estimated very accurately). Both Panel Van and Truck have similarly sized estimates and standard errors.
+
+The second best model had used all the same predictors as the final model but vehicle.body was not used. Below shows the second best model.
+
+```{r}
+second <- glm(claims ~ poly(age, 2) + gender + reg.cat + veh.use + 
+             veh.age ,
+          data = auto_ins,
+          subset = btv == "B",
+          family = poisson(link = "log"),
+          offset = log(exposure))
+(sfinal <- summary(second))
+```
+
+Based on the second model, age, gender, the vehicle ages between 15 and 19 are significant and vehicle use is significant as well.
+
+
+##Discussion of the Model
+
+For our recommended model, some coefficients have small (less than half
+of the absolute value of the coefficient) standard errors compared to the
+size of the estimated coefficients.
+
+The residuals for our recommended model do not show significant patterns. The
+following graph shows the deviance residuals against the expected mean frequency.
+
+```{r dev-residuals-final-vs-mean-frequency, message=FALSE}
+ggplot(data.frame(p = predict(final, type = "response"),
+                  r = resid(final, type = "deviance"))) +
+  aes(x = p, y = r) +
+  geom_point(shape = 1) +
+  geom_smooth() +
+  labs(x = "Expected Mean Frequency",
+       y = "Deviance Residuals")
+```
+
+This is a typical plot for frequency models. The cluster along the black "lines"
+because the actual observations are integer valued and the expected frequency is
+typically a small number in the range of approximately 5% to 50%.  The blue
+line shows a smooth overall estimate of the pattern of residuals as the mean frequency
+increases.  Ideally we would like this line to be horizontal.  In our
+case we see a bit of dipping at the start, flat in the middle, and some more dipping towards the end. Overall the pattern is reasonably flat.  The grey shaded area around
+the blue line shows the uncertainty in its estimation. Towards the right-hand side
+the grey shaded area increases as we have fewer and fewer points to estimate the line.
+
+The deviance is a key concept in generalized linear models an analysis of deviance will most likely show that the variable (as a whole) is significant. Below shows a table with an analysis of deviance.
+
+```{r,echo=FALSE}
+anova(final, test = "Chisq")
+```
+By estimating 7 parameters the deviance is reduced by approximately 11 points which is not too bad of a return.
+
+Overdispersion is an important concept in the analysis of discrete data. Overdispersion occurs because the mean and variance components of a GLM are related and depends on the same parameter that is being predicted through the independent vector. The only way to show that over-dispersion is apparent is to find a model that fits well and gives a dispersion statistic nearly equal to one.
+
+```{r,echo=FALSE}
+pearson <- function(fit) {
+  ans <- sum((fit$y - fit$fitted.values)^2/fit$fitted.values)
+  
+  return(ans)
+}
+```
+
+Below shows the Pearson Chi-Squared statistic.
+
+```{r,echo=FALSE}
+pearson(final)
+```
+The Pearson chi-squared statistic is approximately distributed
+like a chi-squared random variable with a mean equal to the number
+of observations less the number of estimated parameters.  So we ought
+to compare it with this mean.  Keep in mind that a chi-squared random
+variable with a mean equal to $n$ has a variance equal to $2n$. Taking
+two times the standard deviation gives a good yardstick to check if
+the value we have is *too* large.
+
+For the final model the degrees of freedom is equal to 5,999 which is the number of observations minus 1 which is why we get 5999. So the variance is then equal to 11,998 which is twice the degrees of freedom. Hence the standard deviation is about 109.5 which is the square root of the variance. Two times that number gets us to 219.1. The degrees of freedom added with 219.1 is approximately 6218 and so anything above 6,218 is too big. The pearson statistic shown above is greater than 6218 so it is too big.
+
+A function is created that calculates the dispersion statistic. This one is defined as the Pearson chi-squared statistic divided by the degrees of freedom.
+```{r,echo=FALSE}
+dispersion <- function(fit) {
+  ans <- pearson(fit) / fit$df.residual
+  
+  return(ans)
+}
+```
+```{r,echo=FALSE}
+dispersion(final)
+```
+
+Since the build data set has 6000 observations, a dispersion statistic greater than 1.0365148 is too big. This shows that the final model is overdispersed.
+
+When comparing the dispersion among the final model and the second best model, a list of all the dispersion statistics were created.
+
+```{r,echo=FALSE}
+l <- list(second,final)
+sapply(l, dispersion)
+```
+
+Both models are overdispersed but the final model is slightly less overdispersed.
+
+The Akaike Information Criterion is a common measure to compare different models. A lower AIC indicates a better model fit.
+
+The Akaike Information Criterion for the final model is `r prettyNum(round(AIC(final),1),big.mark = ",")` compared to the second best model `r prettyNum(round(AIC(second),1),big.mark = ",")`. The AIC for the second best model is slightly larger than the AIC for the final model which indicates that the final model is a better model.
+Also in the appendix, the scatterplot showing AIC against Deviance shows that the final model is a better model than the second best model that was selected since the AIC and deviance were much lower than the second best model's AIC and deviance. The scatterplot showing Maximum Absolute Deviation against Deviance shows that the final model had a much lower deviance and a very low maximum absolute deviation which shows that the final model is a stronger model.
+
+# Summary and Concluding Remarks
+
+Through different forms of analysis and comparisons amongst the final model and the second best model, it shows that the final model with the following variables: age as a second-degree polynomial, gender, vehicle use, region as a grouped variable, vehicle age as a categorical variable and vehicle body is indeed a better fit than the second best model. This data set was based on 1014 claims from 10000 policyholders. This is a large data set which helps us to develop complex data sets. One might conjecture about any number of additional variables that could be included; total cost of the claims and value of the vehicle are some good candidates. It would have been interesting to test the Negative Binomial distribution to fit the model and see how it compares with the Poisson distribution to fit the model. Although we know this dataset was collected recently, we do not know when exactly it came out. The analysis formed in this report may  transform to modern drivers. Nevertheless, the techniques explored in this report should be immediately applicable with the appropriate set of modern experience for drivers.
+
+
+# References
+
+Frees, Edward W., **Regression Modeling with Actuarial and
+  Financial Applications,** 2010, Cambridge University Press.
+
+Hilbe, J. M., 2009, *Logistic Regression Models*, Boca Raton, FL:
+Chapman & Hall/CRC.
+
+
+# Appendix 
+
+```{r-score,echo=FALSE}
+score <- function(newdata) {
+  auto_ins <- newdata
+  
+  # code to make new variables that your model needs
+  auto_ins$reg.cat <- fct_collapse(db$region,
+                             WB = c("Warrendale", "Bleachery"),
+                             CL = c("The Chemistry", "The Lanes"),
+                             LP = c("Lakeview", "Piety Corner"))
+  
+  auto_ins <- auto_ins %>%
+    mutate(veh.use = case_when(
+      vehicle.use == "Business" ~ "B&C",
+      vehicle.use == "Commute" ~ "B&C",
+      vehicle.use == "Private" ~ "Prv",
+      TRUE ~ "Other"))
+  auto_ins$veh.use <- factor(auto_ins$veh.use,
+                       levels = c("Prv", "B&C"))
+  
+  auto_ins <- auto_ins %>% 
+    mutate(veh.age = case_when(
+      (vehicle.age > -1 & vehicle.age <  5) ~ "0-4",
+      (vehicle.age >  4 & vehicle.age < 10) ~ "5-9",
+      (vehicle.age >  9 & vehicle.age < 15) ~ "10-14",
+      (vehicle.age > 14 & vehicle.age < 20) ~ "15-19",
+      (vehicle.age > 19 & vehicle.age < 26) ~ "20-25",
+      TRUE ~ "Other"))
+  auto_ins$veh.age <- factor(auto_ins$veh.age,
+                       levels = c("0-4","5-9","10-14","15-19","20-25"))
+  
+  # predict mean claim count for new data
+  ans <- predict(final, newdata = auto_ins, type = "response")
+  return(ans)
+}
+```
+
+```{r,echo=FALSE}
+barplot(table(auto_ins$age_group), main="Distribution of Age",
+    xlab="Age Group")
+```
+```{r,echo=FALSE}
+barplot(table(auto_ins$education_level), main="Distribution of Education Levels",
+    xlab="Levels of Education")
+```
+```{r,echo=FALSE}
+boxplot(education~vehicle.use,data=auto_ins, main="Box Plot of Vehicle Use", xlab="Vehicle Use", ylab="Education")
+```
+```{r echo=FALSE, include=FALSE}
+avg <- function(x) {
+     dat <- aggregate(auto_ins$claims, by = list(auto_ins[, x]), FUN = mean)
+     barplot(dat$x, xlab = x, ylab = "Claim Count Averages")
+     axis(side=1, at=1:nrow(dat), labels=dat$Group.1)
+ }
+ avg(x = "age")
+ avg(x = "education")
+ avg(x = "gender")
+ avg(x="marital.status")
+ avg(x = "region")
+ avg(x = "vehicle.age")
+ avg(x = "vehicle.body")
+ avg(x = "vehicle.use")
+```
+
+```{r,echo=FALSE}
+f01 <- glm(claims ~ age,
+          data = auto_ins,
+          subset = btv == "B",
+          family = poisson(link = "log"),
+          offset = log(exposure))
+(sf01 <- summary(f01))
+p <- auto_ins[auto_ins$btv == "B", "age"]
+r <- resid(f01, type = "deviance")
+plot(x = p, y = r,
+     ylim = c(-0.6,0.0),
+     ylab = "Deviance Residuals",
+     xlab = "Age")
+lo <- loess(r ~ p)
+xs <- seq(17, 75, length = 50)
+ys <- predict(lo, newdata = xs)
+lines(x = xs, y = ys, col = "red", lwd = 2)
+```
+
+
+```{r,echo=FALSE}
+msep.fit <- function(fit) {
+  y <- fit$y
+  mu <- fit$fitted.values
+  ans <- mean((y - mu)^2)
+  return(ans)
+}
+```
+
+```{r,echo=FALSE}
+sim.max.deviation <- function(fit, auto_ins, N =  500){
+  sim.b <- numeric(N)
+  sim.t <- numeric(N)
+  build <- auto_ins[auto_ins$btv == "B",]
+  test <- auto_ins[auto_ins$btv == "T",]
+  
+  lbda.b <- predict(fit, newdata = build, type = "response")
+  lbda.t <- predict(fit, newdata = test, type = "response")
+  for(i in 1:N){
+    f.clms.b <- rpois(nrow(build), lambda = lbda.b)
+    f.clms.t <- rpois(nrow(test), lambda = lbda.t)
+    
+    tbl.a.b <- table(factor(build$claims, levels = 0:5))
+    pr.a.b <- tbl.a.b / sum(tbl.a.b)
+    tbl.s.b <- table(factor(f.clms.b, levels = 0:5))
+    pr.s.b <- tbl.s.b / sum(tbl.s.b)
+    sim.b[i] <- max(abs(pr.a.b - pr.s.b))
+    
+    tbl.a.t <- table(factor(test$claims, levels = 0:5))
+    pr.a.t <- tbl.a.t / sum(tbl.a.t)
+    tbl.s.t <- table(factor(f.clms.t, levels = 0:5))
+    pr.s.t <- tbl.s.t / sum(tbl.s.t)
+    sim.t[i] <- max(abs(pr.a.t - pr.s.t))
+  }
+  return(c("Build" = mean(sim.b), "Test" = mean(sim.t)))
+}
+set.seed(123)
+l <- list(second,final)
+mx.dev <- sapply(l, function(x) sim.max.deviation(x, auto_ins))
+mods <- list(second,final)
+
+mx.dev <- sapply(mods, function(x) sim.max.deviation(x, auto_ins))
+info <- data.frame(
+  model = c("second","final"),
+  aic = sapply(mods, AIC),
+  dev = sapply(mods, deviance),
+  msep = sapply(mods, msep.fit),
+  mx.dev = mx.dev[seq(1, length(mx.dev), by = 2)])
+ggplot(info) +
+  aes(x = dev, y = aic, label = model) +
+  labs(x = "Deviance",
+       y = "Akaike Information Criterion") +
+  geom_point() +
+  geom_text_repel(size = 3)
+ggplot(info) +
+  aes(x = dev, y = mx.dev, label = model) +
+  labs(x = "Deviance",
+       y = "Maximum Absolute Deviation") +
+  geom_point() +
+  geom_text_repel(size = 3)
+```
+
+
+
