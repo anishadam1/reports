@@ -1,0 +1,759 @@
+---
+title: "Credit Analysis on Loan Applicants"
+author: "Anisha Dam"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+  html_notebook:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+---
+```{r load-libraries, echo = FALSE, include=FALSE, message=FALSE, warning=FALSE}
+library(MASS)
+library(plyr)
+library(tidyverse)
+library(ggplot2)
+library(ggrepel)
+```
+```{r echo = FALSE, include=FALSE}
+dat = read.table("credit-data-train.txt",header=TRUE)
+str(dat)
+summary(dat)
+```
+
+# Abstract
+
+This report studies the relationship between whether a given applicant will be classified as an applicant with a "bad" or "good" loan rate and potential explanatory variables such as household characteristics, attributes about money being spent and other loan applicant characteristics. Logistic regression was used to fit the best model. To pick the best model, we had to understand each variable and whether or not each variable is significant by conducting different data analysis techniques such as computing the accuracy, specificity, precision and sensitivity rates based on a confusion matrix and also conducting a 10-fold cross validation. Our main finding was household income as a combination of the applicant's income,`DAINC` and the spouse's income, `SINC`.  Other important variables were: age transformed from the `DOB` variable and outgoings on credit cards, `DOUTCC`. The techniques used throughout the report give helpful insights about the loan applicants today and how they impact insurance companies and society as a whole.
+
+  
+# Introduction
+
+According to **Investopedia**, good credit is a "is a classification for an individual's credit history, indicating that the borrower has a relatively high credit score and is a safe credit risk". On the other hand, bad credit is "refers to a person's poor history of paying their bills on time and the likelihood that they will fail to make timely payments in the future. It is often reflected in a low credit score". The data are cross-sectional and the data set used came from the book, **Credit Scoring and its Applications** by Lyn C. Thomas, David B. Edelman, and Jonathan N. Crook. In this data set, we have predicted whether we should consider a loan applicant "good" or "bad" using a logistic model. We have looked at the various characteristics about the loan applicant's characteristics (residential status, value of home, mortgage balance outstanding, etc.), household (number of children, number of dependents, spouse's income, etc.) and money spent (outgoings on mortgage or rent, loans, credit cards, etc.). Applicant's income and employment status seem to be important factors when determining an applicant's credit score. Credit is an important role to play in maintaining a functioning economy in society. 
+
+In Section two, we will present the most important characteristics of the data. The next section represents a discussion of the selected model. Concluding remarks can be found in the fourth section along with the many details of the analysis in the appendix. 
+
+
+# Data Characteristics
+
+The data are cross-sectional with a total of `r prettyNum(nrow(dat), big.mark = ",")` observations and the target variable we will be predicting is whether the applicant has a "good" or "bad" loan rate. There are 15 variables describing whether we should consider a loan applicant "good" or "bad" based on 
+household, income, and outgoings characteristics.
+
+
+The following table shows the variables available and their
+definitions.
+
+| Item | Variable      | Definition                                           |
+|-----:|:--------------|:-----------------------------------------------------|
+|  1   | dob           | Year of birth                                        |
+|  2   | nkid          | Number of children                                   |
+|  3   | dep           | Number of other dependents                           |
+|  4   | phon          | Whether applicant has a home phone or not            |
+|  5   | sinc          | Spouse's income                                      |
+|  6   | aes           | Applicant's employment status                        |
+|  7   | dainc         | Applicant's income                                   |
+|  8   | res           | Residential status                                   |
+|  9   | dhval         | Value of home                                        |
+| 10   | dmort         | Mortgage balance outstanding                         |
+| 11   | doutm         | Outgoings on mortgage or rent                        |
+| 12   | doutl         | Outgoings on Loans                                   |
+| 13   | douthp        | Outgoings on Hire Purchase                           |
+| 14   | doutcc        | Outgoings on credit cards                            |
+| 15   | bad           | Good/bad credit indicator                            |
+
+In the following table, summary statistics were given for the quantitative variables: dob, nkid, dep, sinc, dainc, dhval, dmort, doutm, doutl, douthp, and doutcc.
+
+| Variables   | Min      | 1st Quartile     | 3rd Quartile     | Max     | Mean | Median |
+|------------:|---------:|-----------------:|-----------------:|--------:|-----:|-------:|
+| dob         | 3        | 41               | 63               | 99      | 50.42| 55     |
+| nkid        | 0        | 0                | 1                | 5       | 0.61 | 0      |
+| dep         | 0        | 0                | 0                | 2       | 0.04 | 0      |
+| sinc        | 0        | 0                | 1202             | 50000   | 1956 | 0      |
+| dainc       | 0        | 9000             | 30341            | 64800   | 20926| 18928  |
+| dhval       | 0        | 0                | 28928            | 64928   | 15549| 64928  |
+| dmort       | 0        | 0                | 14464            | 64000   | 10263| 14464  |
+| doutm       | 0        | 0                | 505              | 3800    | 326.6| 240    |
+| doutl       | 0        | 0                | 30               | 5200    | 104.1| 0      |
+| douthp      | 0        | 0                | 0                | 1600    | 27.48| 0      |
+| doutcc      | 0        | 0                | 0                | 2800    | 39.22| 0      |
+
+In the following table, information was given for the categorical variables: phon, aes and res.
+
+| Variables     | Number of Levels | Values                                                   |      
+|--------------:|-----------------:|---------------------------------------------------------:|
+| phon          | 2                | 0 (no home phone) - 92, 1 - 808                          | 
+| aes           | 11               | P - 394, V - 164, E - 89, etc.                           | 
+| res           | 5                | F - 97, N - 46, O - 450, P - 187, U - 120                | 
+
+Note that the variable, `BAD` was not used in the tables because it is the predicting variable that will be used for the model.
+
+Out of all the applicants, 660 applicants are good whereas 240 applicants are bad.
+The years of birth range from 3 to 99 which seems reasonable and 99 is used as a missing indicator.
+Majority of the applicants have a home phone.
+Out of all the applicants, 394 work in a private sector and 3 applicants work in some other sector.
+The range for both the applicant's and spouse's income seems fairly reasonable however the majority of the applicants have 0 income which could indicate that they are unemployed or has no response.
+450 applicants own a home.
+The value of the home for the majority of the applicants is 0 which means that the applicant did not respond or does not own a home.
+The mortgage balance outstanding for the majority of the applicants is 0 which means that the applicant did not respond or does not have any mortgage balance outstanding.
+The majority of the applicants have no outgoings on mortgage/rent, loans, hire purchase or credit cards.
+
+We have decided to transform and group some variables together because there seems to be many variables and not all will be useful in their original forms.
+
+We have decided to group together some of the employment statuses together because there seems to be too many categories. If some of the factors were grouped together, then it may be a more reliable variable. Below shows that B, M N, U, and Z were grouped together since the lowest number of applicants were in that group and the rest of the factors were left as is.
+```{r,echo=FALSE}
+plyr::count(dat$AES)
+```
+
+```{r}
+dat$emp.stat <- fct_collapse(dat$AES, "Other" = c("B", "M", "N", "U", "Z"))
+```
+
+We also decided to group together the variable `SINC` and `DAINC` because both variables seem to have a strong relationship with `BAD`. Both variables have similar ranges for income.
+
+```{r}
+dat$household = dat$DAINC + dat$SINC
+idx.inc <- which(dat$household == 0)
+dat$inc.unkn <- rep(0, length(dat$household))
+dat$inc.unkn[idx.inc] <- 1
+```
+
+We decided to create a new variable called age instead of using the variable, `DOB` since it will be easier to analyze and understand the data if it were using the applicant's age rather than his or her year of birth.
+
+```{r}
+dat$age <- 2000 - (1900 + dat$DOB)
+idx.age <- which(dat$age == 1)
+dat$age[idx.age] <- 0
+dat$age.unkn <- rep(0, length(dat$age))
+dat$age.unkn[idx.age] <- 1
+```
+
+Also since `NKID` and `DEP` seem like similar variables, we decided to group those two variables together.
+
+```{r}
+dat$all.dep <- dat$NKID + dat$DEP
+dat$depend <- factor(ifelse(dat$all.dep < 3, "[0,1,2]", "3+"), levels = c("[0,1,2]", "3+"))
+```
+
+The outgoings variables seem like similar variables as well, so we decided to group those variables together.
+
+```{r}
+dat$outflow <- apply(dat[,c("DOUTM", "DOUTL", "DOUTHP", "DOUTCC")], 1, sum)
+```
+
+Below shows the average bad loan rate:
+
+```{r,echo=FALSE}
+mean(dat$BAD)
+```
+
+Below shows the average bad loan rate compared to the residential status and applicant employment status.
+
+```{r bad-loan-rate-by-residential-status,echo=FALSE}
+tapply(dat$BAD, dat$RES, mean)
+```
+
+```{r bad-loan-rate-by-applicant-employment-status,echo=FALSE}
+tapply(dat$BAD, dat$emp.stat, mean)
+```
+
+The highest bad loan rate for the residential status was for the category, other and the highest bad loan rate for the applicant employment status was for the category, retired which makes sense. Applicants who had some other residential status had more than double the average bad loan rate.
+
+Below shows the average loan rate compared to an applicant having a home phone or not.
+
+```{r bad-loan-rate-by-phon,echo=FALSE}
+tapply(dat$BAD, dat$PHON, mean)
+```
+
+The average bad loan rate does not differ much having a home phone or not so it does not seem like a significant variable for the final model.
+
+Below shows the probability of default based on the number of dependents including children the applicant has.
+
+```{r prob-default-by-modified-dependents,echo=FALSE}
+tbl <- rbind(tapply(dat$BAD, dat$depend, sum),
+             tapply(1-dat$BAD, dat$depend, sum),
+             tapply(dat$BAD, dat$depend, mean))
+dimnames(tbl)[[1]] <- c("BAD", "GOOD", "%BAD")
+tbl
+```
+Applicants with less than three dependents have a slightly lower probability of default rate compared to applicants with three or more dependents. The probability of default could have been lower if the number of all dependents were higher for applicants with three or more dependents. There are only 45 dependents in the good section.
+
+In the appendix, a plot shows the household income vs. having good or bad credit. The lower the household income, the higher the probability of the applicant having bad credit and vice versa. The graph shows that the applicant with no income has almost a 50% chance of getting bad credit.
+
+In the appendix, a plot shows the applicant's value of the home vs. having good or bad credit. There was not much variation in probabilities of having good or bad credit and the value of the home. The probability of having bad credit was around 25% whether the applicant had a low home value or high home value. So dhval does not seem like a significant variable in the final model.
+
+In the appendix, a plot shows the applicant's mortgage balance outstanding vs. having good or bad credit. There was not much variation in probabilities of having good or bad credit and the mortgage balance outstanding. The probability of having bad credit was around 25% whether the applicant had a low or high mortgage balance outstanding. So dmort does not seem like a significant variable in the final model.
+
+Below shows a plot between the applicant's age vs. having good or bad credit.
+
+
+```{r plot-by-age, echo = FALSE,warning=FALSE,message=FALSE}
+plt01 <- ggplot(dat) +
+  aes(x = age, y = BAD) +
+  geom_jitter(height = 0.02, shape = 1) +
+  labs(x = "Age",
+       y = "Good/Bad Credit")
+#print(plt01)
+ainc.quantiles <- unique(quantile(dat$age, probs = seq(0, 1, length = 11)))
+plt02 <- plt01 + geom_vline(xintercept = ainc.quantiles, color = "grey")
+#print(plt02)
+bks <- ainc.quantiles
+bks[1] <- bks[1] - 0.1
+bks[length(bks)] <- bks[length(bks)] + 0.1
+dat$fainc <- cut(dat$age, breaks = bks)
+blr.ainc <- tapply(dat$BAD, dat$fainc, mean)
+xs <- (bks[-1] + bks[-length(bks)])/2
+plt03 <- plt02 + geom_point(data = data.frame(x = xs, y = blr.ainc), 
+                            aes(x = x, y = y),
+                            color = "red")
+#print(plt03)
+plt03 <- plt03 + geom_smooth(se = FALSE)
+print(plt03)
+
+```
+
+Applicants who are above the age of 80 have a higher probability of default rate than applicants between the ages 40 and 60. Also there are not many data points between the ages of 80-100 compared to the ages 0-60. Applicants who are less than 40 have a slightly higher probability of default compared to the middle-aged applicants.
+
+Below shows a plot between the applicant's outgoings vs. the applicant having good or bad credit.
+
+```{r plot-by-outflow, echo = FALSE,warning=FALSE,message=FALSE}
+plt01 <- ggplot(dat) +
+  aes(x = outflow, y = BAD) +
+  geom_jitter(height = 0.02, shape = 1) +
+  labs(x = "Outgoings",
+       y = "Good/Bad Credit")
+#print(plt01)
+ainc.quantiles <- unique(quantile(dat$outflow, probs = seq(0, 1, length = 11)))
+plt02 <- plt01 + geom_vline(xintercept = ainc.quantiles, color = "grey")
+#print(plt02)
+bks <- ainc.quantiles
+bks[1] <- bks[1] - 0.1
+bks[length(bks)] <- bks[length(bks)] + 0.1
+dat$fainc <- cut(dat$outflow, breaks = bks)
+blr.ainc <- tapply(dat$BAD, dat$fainc, mean)
+xs <- (bks[-1] + bks[-length(bks)])/2
+plt03 <- plt02 + geom_point(data = data.frame(x = xs, y = blr.ainc), 
+                            aes(x = x, y = y),
+                            color = "red")
+#print(plt03)
+plt03 <- plt03 + geom_smooth(se = FALSE)
+print(plt03)
+
+```
+Applicants with no outgoings have the highest probability of default rate compared to applicants with outgoings of close to 500 dollars. Applicants with outgoings of more than 4000 dollars have the lowest probability of default rate but there are not a lot of data points above 4000.
+
+Below shows a scatterplot between the applicant's income and the outgoings on credit cards.
+
+```{r,echo=FALSE}
+plot(dat$DAINC, dat$DOUTCC, main="Applicant's Income vs. Outgoings on Credit Cards",
+     xlab="Applicant's Income ", ylab="Outgoings on Credit Cards ", pch=19)
+abline(lm(dat$DOUTCC~dat$DAINC), col="red") # regression line (y~x)
+lines(lowess(dat$DAINC,dat$DOUTCC), col="blue") # lowess line (x,y)
+```
+
+
+The relationship between the applicant's income and the outgoings on credit cards seems moderately strong since applicants with a higher income tend to have lower outgoings on credit cards and vice versa. However, there are two strong outliers shown. An applicant with an income of approximately 52000 had outgoings of close to 3000 and an applicant with no income had outgoings close to 2500. The applicant with no income either is unemployed or retired. Applicants with incomes ranging from 20000 and 40000 had higher outgoings on credit cards than the rest of the applicants.
+
+Below shows a scatterplot between the applicant's income and the outgoings on mortgage/rent.
+```{r,echo=FALSE}
+plot(dat$DAINC, dat$DOUTM, main="Applicant's Income vs. Outgoings on Mortgage/Rent",
+     xlab="Applicant's Income ", ylab="Outgoings on Mortgage/Rent ", pch=19)
+abline(lm(dat$DOUTM~dat$DAINC), col="red") # regression line (y~x)
+lines(lowess(dat$DAINC,dat$DOUTM), col="blue") # lowess line (x,y)
+```
+
+There seems to be a stronger relationship between the applicant's income and the outgoings on mortgage/rent. However there is a clear outlier where the applicant's income is 10000 and the outgoings on mortgage and rent are almost 4000. Applicants with a higher income tend to have more outgoings on mortgage/rent based on the graph.
+
+Overall this data set is not very strong with decent quality because this data set is quite small with 900 entries and there are variables which do not have a response, especially for the outgoings on mortgage or rent, loans hire purchase and credit cards. Also there is not much variability within each variable since many of the data points are centered towards one group or factor. There are however, a good number of variables with both quantitative and qualitative data so a lot can be manipulated with this data set for modeling.
+
+# Model Selection & Interpretation
+
+The previous section established that there are real patterns
+between whether or not the applicant has good or bad credit and the predictor variables, such
+as `household` and `age` type.  These empirical analyses
+only looked at one variable at a time, but there is clear
+evidence that a model can be constructed to estimate whether an applicant has good or bad credit based on the variables we have available.
+
+In this section we summarize these patterns using logistic
+modeling.  We will also describe the features of the data that
+we used in guiding our selection process.
+
+Based on our investigation of the data, we recommend a Logistic
+regression model using a logit link function to estimate
+good or bad credit. The logistic regression was used to model the data because if the response variable was a binary variable, such as `BAD`, then the logistic regression should be used. A confusion matrix and a 10-k fold cross validation method were used to determine whether or not the final model is valid and reliable.
+
+At first a null model was created with only the intercept but it is not shown in this report. Then each variable was separately put into a single model and finally some variables that seemed significant were put into the final model including some of the variables that were created in the data characteristics section. The standard error was compared with the estimate of each coefficient and if the standard error was too big compared to the estimate, then that variable was not included. Although variables grouped together such as `emp.stat`, `all.dep` and `outflow` seemed like significant variables from the data characteristics section, ultimately they were not included in the final model because they were not very significant.
+
+The final model was fit using an iteratively weighted least squares algorithm and the following tables show the value of the estimated coefficients and their standard errors.
+
+```{r}
+final <- glm(BAD ~age +age.unkn  + household + RES + DOUTCC,
+           data = dat,
+           family = binomial(link = "logit"))
+summary(final)
+```
+
+Note that both quantitative and qualitative variables were used to figure out the best model.
+Based on the model, almost all of the variables were significant except for RESO, RESP, RESU and `age.unkn` and household is the most significant with a very low p-value. Also the coefficient estimate is much lower than the standard deviation for household which indicates that it is a strong factor in determining whether the applicant had good or bad credit.
+Both RESP and RESU had negative coefficients and very high p values which shows that they are not estimated very accurately. We have decided to interpret one of the coefficient estimates, such as `household`. The coefficient estimate is -3.308e-05 which is less than 0. This means that an applicant with a lower household income has a lower probability and therefore is more likely to be classified as an applicant with a "bad" loan rate, while the other predictors are held constant.
+Often times in a logistic regression odd ratios are calculated. An odds ratio is a measure of association between an exposure and an outcome. The odds ratio represents the odds that an outcome will occur given a particular exposure, compared to the odds of the outcome occurring in the absence of that exposure. 
+Odds are defined as 
+$$
+  \text{odds} \equiv \frac{\pi}{1 - \pi}
+$$
+where $\pi$ is the probability of success and $1 - \pi$ is
+the probability of failure.
+The odds ratio for `age` can be calculated by exponentiating the age coefficient to get a value of 1.0167. This means we expect to see about a 1.67% increase in the odds of being an applicant with a "bad" loan rate, for a 1 year increase in age.
+Based on our best model, if we were to predict whether the applicant will end up having a "good" loan rate or "bad" loan rate we should take a look at the following information in the table below.
+
+| `age`    | `age.unkn`       | `household`      | `RESP`     | `DOUTCC` |
+|---------:|-----------------:|-----------------:|-----------:|---------:|
+| 54       |  0               |  60000           |  1         |  400     |
+
+Based on the information above, if we were to calculate $\pi$ from the logistic model, it would be 0.0207. This means that the applicant with the information above will be classified with having a "good" loan rate because 0.0207 is close to 0.
+
+
+##Discussion of the Model
+
+The residuals for our recommended model do not show too significant patterns, although there is some curvature. The
+following graph shows the deviance residuals against the expected mean frequency.
+
+```{r dev-residuals-final-vs-response, echo=FALSE}
+ggplot(data.frame(p = predict(final, type = "response"),
+                  r = resid(final, type = "deviance"))) +
+  aes(x = p, y = r) +
+  geom_point(shape = 1) +
+  geom_smooth() +
+  labs(x = "Predicted Probabilities",
+       y = "Deviance Residuals")
+```
+
+The blue line shows a more or less smooth overall estimate of the pattern of residuals as the mean good/bad credit score increases. Ideally we would like this line to be horizontal.  In our
+case we see a bit of dipping at the start and more dipping towards the end. Overall the pattern is not too flat as there is some curvature. The grey shaded area around the blue line shows the uncertainty in its estimation. Towards the beginning of the left-hand side and the end of the right-hand side, the grey shaded area increases as we have fewer and fewer points to estimate the line.
+
+
+Below shows a table with an analysis of deviance.
+
+```{r,echo=FALSE}
+anova(final, test = "Chisq")
+```
+By estimating the 6 parameters, the deviance is reduced by approximately 10.6 points which is not too bad of a return.
+
+Below shows a confusion matrix with a threshold of 40%.
+
+```{r confusion-matrix-with-threshold-0.4,echo=FALSE}
+p <- predict(final, type = "response") # predicted probabilities
+PC <- ifelse(p > 0.40, 1, 0) # predicted condition 1 = bad, 0 = good
+TC <- dat$BAD # true condition
+
+# Confusion Matrix
+cm <- table(factor(PC, levels = c("1", "0")),
+            factor(TC, levels = c("1", "0")))
+dimnames(cm) <- list(c("pc.POS", "pc.NEG"),
+                     c("tc.POS", "tc.NEG"))
+cm
+```
+
+Based on the confusion matrix there are several metrics we can 
+calculate:
+
+1. Accuracy
+1. Precision
+1. Sensitivity
+1. Specificity
+
+The following function computes all four:
+
+```{r cm-metrics2-definition,echo=FALSE}
+cm.metrics <- function(cm) {
+  acc <- sum(diag(cm))/sum(cm)
+  pre <- cm[1,1]/sum(cm[1,])
+  sen <- cm[1,1]/sum(cm[,1])
+  spe <- cm[2,2]/sum(cm[,2])
+  
+  ans <- c("Accuracy" = acc,
+           "Precision" = pre,
+           "Sensitivity" = sen,
+           "Specificity" = spe)
+  return(ans)
+}
+```
+
+Evaluating these metrics for the confusion matrix we have yields:
+
+```{r cm-metrics-for-threshold-0.4,echo=FALSE}
+round(cm.metrics(cm),4)
+```
+
+The accuracy rate represents how often the classifier is correct and in this case, the classifier is only around 73% correct based on a threshold of 0.4. The precision rate determines how often the classifier is correct when it predicts that the applicant will have a bad credit score. In this case the precision rate is about 49%. Sensitivity measures how often the classifier will predict a bad credit score when the applicant does have a bad credit rate. In this case the sensitivity is around 28% which is slightly low. Specificity measures how often the classifier will predict a good credit score when the applicant does have a good credit rate. In this case the specificity rate is around 89% which is quite high. Sensitivity seems the most relevant and important metric out of all the metrics because if an applicant is predicted to have a bad credit score, the actual credit score should result in "bad". If the model predicted a good credit score but in reality it turned out to be a bad credit score, then that would not be good for both the applicant or the insurance company giving out loans.
+
+```{r compute-cm-metrics-for-several-thresholds, echo=FALSE}
+p <- predict(final, type = "response") # predicted probabilities
+TC <- dat$BAD # true condition
+
+thresholds <- seq(0.1, 0.9, by = 0.1)
+M <- matrix(NA, nrow = length(thresholds), ncol = 5)
+i <- 1
+for(thr in thresholds){
+  PC <- ifelse(p > thr, 1, 0) # predicted condition 1 = yes satellite, 0 = no
+  # Confusion Matrix
+  cm <- table(factor(PC, levels = c("1", "0")),
+              factor(TC, levels = c("1", "0")))
+  dimnames(cm) <- list(c("pc.POS", "pc.NEG"),
+                       c("tc.POS", "tc.NEG"))
+  M[i,] <- c(thr, cm.metrics(cm))
+  i <- i+1
+}
+dimnames(M)[[2]] <- c("threshold", "accuracy", "precision", "sensitivity", "specificity")
+M <- as_tibble(M)
+```
+
+Below shows a ROC curve.
+
+```{r roc-plot-for-crab-classifier-using-width, echo=FALSE}
+ggplot(M) +
+  aes(x = 1 - specificity, y = sensitivity, label = threshold) +
+  geom_point() + 
+  geom_text_repel(size = 3) +
+  geom_abline(slope = 1, color = "grey") +
+  coord_cartesian(xlim = c(0,1), ylim = c(0,1))
+```
+
+In a Receiver Operating Characteristic (ROC) curve the true positive rate (Sensitivity) is plotted in function of the false positive rate (1-Specificity) for different cut-off points. Each point on the ROC curve represents a sensitivity/specificity pair corresponding to a particular decision threshold. This particular graph shows that having thresholds between 0.7 and 0.9 and 0.1 and 0.2 are not ideal but having a threshold between 0.4 and 0.6 is more reasonable since the sensitivity rate and specificity rate will be higher which is good, but the accuracy and sensitivity rate would be much lower.
+
+Below shows the accuracy, precision, sensitivity and specificity rates for thresholds between 0.1 and 0.9.
+
+```{r display-cm-metrics, echo=FALSE}
+M
+```
+
+```{r dat-model, echo=FALSE, include=FALSE}
+final <- glm(BAD ~age +age.unkn  + household + RES + DOUTCC,
+           data = dat,
+           family = binomial(link = "logit"))
+p <- predict(final, type = "response") # predicted probabilities
+PC <- ifelse(p > 0.4, 1, 0) # predicted condition 1 = yes satellite, 0 = no
+TC <- dat$BAD # true condition
+
+# Confusion Matrix
+cm <- table(factor(PC, levels = c("1", "0")),
+            factor(TC, levels = c("1", "0")))
+dimnames(cm) <- list(c("pc.POS", "pc.NEG"),
+                     c("tc.POS", "tc.NEG"))
+(whole.sample <- cm.metrics(cm))
+```
+
+Below shows that the data was split into 10 parts where a 10 fold cross-validation was used.
+K-Fold Cross-Validation is where a given data set is split into a K number of sections/folds where each fold is used as a testing set at some point. In this case, a 10-Fold cross validation(K=10) was used where the data set is split into 10 folds. In the first iteration, the first fold is used to test the model and the rest are used to train the model. In the second iteration, 2nd fold is used as the testing set while the rest serve as the training set. This process is repeated until each fold of the 10 folds has been used as the testing set.
+
+```{r dat-split-in-10-parts,echo=FALSE}
+set.seed(314337)
+dat$fold <- sample(c(rep(0, 90), rep(1, 90), rep(2, 90),
+                      rep(3, 90), rep(4, 90), rep(5, 90),
+                      rep(6, 90), rep(7, 90), rep(8, 90), rep(9, 90)),
+                    nrow(dat),
+                    replace = FALSE)
+
+```
+
+```{r dat-k-fold-cross-validation,echo=FALSE}
+set.seed(549843)
+F <- matrix(NA, nrow = 10, ncol = 5) # for storing our metrics for each fold
+dimnames(F)[[2]] <- c("fold", "accuracy", "precision", "sensitivity", "specificity")
+i <- 1
+for(fld in 0:9){
+  final1 <- glm(BAD ~age +age.unkn  + household + RES + DOUTCC,
+           data = dat,
+           subset = fold != fld,
+           family = binomial(link = "logit"))
+  
+  p <- predict(final1,
+               newdata = subset(dat, subset = fold == fld), # on the fold not used
+               type = "response")
+  PC <- ifelse(p > 0.4, 1, 0)
+  TC <- dat$BAD[dat$fold == fld] # True condition on the fold predicted
+  cm <- table(factor(PC, levels = 1:0),
+              factor(TC, levels = 1:0))
+  F[i,] <- c(fld, cm.metrics(cm))
+  i <- i + 1
+}
+(fld.means <- apply(F, 2, mean)[2:5]) # calculate means for each column
+```
+
+A table is shown below showing the difference between the accuracy, precision, sensitivity and specificity rates between the data as a whole and the data when a 10 fold cross validation was used.
+
+```{r dat-cross-validated-vs-whole-sample,echo=FALSE}
+tbl <- rbind("Whole Sample" = whole.sample,
+      "Cross-Validated" = fld.means,
+      "Difference" = whole.sample - fld.means)
+dimnames(tbl)[[2]] <- c("Accuracy", "Precision", "Sensitivity", "Specificity")
+round(tbl,4)
+```
+
+The difference between the rates when the whole data was used vs. the cross validated data was not too high however all the rates decreased slightly from the whole sample. Using cross-validation is more accurate because it looks at one fold at a time rather than looking at the entire dataset which is why the metrics are slightly lower for the cross-validated row.
+
+Below shows the second best model that was used.
+
+```{r}
+second <- glm(BAD ~age + all.dep  + household + RES + DOUTCC,
+           data = dat,
+           family = binomial(link = "logit"))
+summary(second)
+```
+Note that in this model, `age.unkn` was not included and `all.dep` was included. In this model, household is very significant as well along with age. Again, RESP and RESU are not significant because there is not much variation between the coefficient estimate and the standard error.
+
+The following graph shows the deviance residuals against the expected mean frequency for the second best model.
+
+```{r dev-residuals-second-vs-response, echo=FALSE}
+ggplot(data.frame(p = predict(second, type = "response"),
+                  r = resid(second, type = "deviance"))) +
+  aes(x = p, y = r) +
+  geom_point(shape = 1) +
+  geom_smooth() +
+  labs(x = "Predicted Probabilities",
+       y = "Deviance Residuals")
+```
+In this case we see a bit of dipping at the start and more dipping towards the end. Overall the pattern is not too flat as there is some much curvature. The grey shaded area around the blue line shows the uncertainty in its estimation. Towards the beginning of the left-hand side and the end of the right-hand side, the grey shaded area increases as we have fewer and fewer points to estimate the line. There seems to be the same amount of curvature in the final model compared to this model.
+
+
+Below compares the accuracy, precision, sensitivity and specificity between the final model and the second best model. Note that 'final1' represents the final model and 'final2' represents the second best model.
+
+```{r cm-metrics-definition,echo=FALSE}
+cm.metrics <- function(cm) {
+  acc <- sum(diag(cm))/sum(cm)
+  pre <- cm[1,1]/sum(cm[1,])
+  sen <- cm[1,1]/sum(cm[,1])
+  spe <- cm[2,2]/sum(cm[,2])
+  
+  ans <- c("Accuracy" = acc,
+           "Precision" = pre,
+           "Sensitivity" = sen,
+           "Specificity" = spe)
+  return(ans)
+}
+```
+
+```{r,echo=FALSE}
+M <- matrix(NA, nrow = 2, ncol = 4)
+l <- list(final, second)
+i <- 1
+for(f in l){
+  p <- predict(f, type = "response")
+  PC <- ifelse(p > 0.4, 1, 0)
+  TC <- dat$BAD
+  cm <- table(factor(PC, levels = 1:0),
+              factor(TC, levels = 1:0))
+  M[i,] <- cm.metrics(cm)
+  i <- i + 1
+}
+dimnames(M) <- list(paste("final", 1:2, sep = ""),
+                    c("Accuracy", "Precision", "Sensitivity", "Specificity"))
+round(M * 100, 2)
+```
+
+Even though the second best model has a slightly higher sensitivity rate than the final model, the final model has a slightly higher accuracy, precision and specificity rates than the second best model. This clarifies that the final model is indeed the best model because most of the metrics are higher than the metrics in the second best model.
+
+Below shows a Hosmer-Lemeshow Goodness of fit test comparing the final model and the second best model. The Hosmer-Lemeshow test is a goodness of fit test specifically for logistic regression, especially for risk prediction models. Specifically, the HL test calculates if the observed bad loan rates match the expected bad loan rates in population subgroups.
+
+```{r hosmer-lemeshow-goodness-of-fit-test,echo=FALSE}
+HL <- function(a, e, g = 10) {
+  y <- a
+  yhat <- e
+  qq <- quantile(yhat, probs = seq(0, 1, 1/g))
+  cutyhat <- cut(yhat, breaks = qq, include.lowest = TRUE)
+  observed <- xtabs(cbind(y0 = 1 - y, y1 = y) ~ cutyhat)
+  expected <- xtabs(cbind(yhat0 = 1 - yhat, yhat1 = yhat) ~ cutyhat)
+  C.hat <- sum((observed - expected)^2/expected)
+  p.val <- 1 - pchisq(C.hat, g - 2)
+  ans <- c("HL Stat." = C.hat,
+           "P-Value" = p.val)
+  return(ans)
+}
+```
+
+```{r,echo=FALSE}
+rbind("final" = HL(dat$BAD, predict(final, type = "response")),
+      "second" = HL(dat$BAD, predict(second, type = "response")))
+```
+
+Since the HL statistic for the final model is higher than the HL statistic for the second best model, it shows that the final model is the better model.
+
+Below shows the AIC for both the final and the second best model.
+
+```{r,echo=FALSE}
+AIC(final)
+AIC(second)
+```
+ The AIC criterion for the final model is smaller than the AIC criterion for the second best model and so this further shows that the final model is a stronger and better model.
+
+# Summary and Concluding Remarks
+
+Through different forms of analysis and comparisons amongst the final model and the second best model, it shows that the final model with the following variables: `age` as a transformed variable, `age.unkn`, `household` as a grouped variable, `RES` as a categorical variable, and `DOUTCC` is indeed a better fit than the second best model. This data set was based on 660 "good" loan applicants and 240 "bad" loan applicants from 900 loan applicants. This is a relatively small data set but a lot of variables which can be manipulated which helps us to develop complex data sets. However many of the variables have missing values or no response which can affect conducting data analysis and picking the right model. Our final model could have been stronger if the dataset was stronger and larger. One might conjecture about any number of additional variables that could be included; length of employment for a given applicant and gender of the applicant are some good candidates. It would have been interesting to look at the type of credit history as a categorical variable for the applicants such as whether the applicant had a critical, delayed or a credit history that has been repaid. Although we know this dataset was collected approximately 8 years ago which is not too long ago, it would be interesting to look at a dataset which came out recently regarding credit applicants. The analysis formed in this report may transform to credit applicants today. Nevertheless, the techniques explored in this report should be immediately applicable with the appropriate set of applicants today and could give insight on credit applicants for the future.
+
+
+# References
+
+
+Frees, Edward W., **Regression Modeling with Actuarial and
+  Financial Applications,** 2010, Cambridge University Press.
+
+
+# Appendix 
+
+Below shows the score function which will be applied for new dataset.
+
+```{r score-function}
+score <- function(newdata){
+  dat <- newdata
+  
+  dat$age <- 2000 - (1900 + dat$DOB)
+  idx.age <- which(dat$age == 1)
+  dat$age[idx.age] <- 0
+  dat$age.unkn <- rep(0, length(dat$age))
+  dat$age.unkn[idx.age] <- 1
+  dat$household <- dat$DAINC + dat$SINC
+  
+  p <- predict(final, newdata = dat, type = "response")
+  ans <- ifelse(p > 0.4, 1, 0)
+  return(ans)
+}
+```
+
+Below shows plots between some of the variables and the target variable, `BAD` which were discussed in the data characteristics section.
+
+```{r plot-by-household-income, echo = FALSE,warning=FALSE,message=FALSE}
+plt01 <- ggplot(dat) +
+  aes(x = household, y = BAD) +
+  geom_jitter(height = 0.02, shape = 1) +
+  labs(x = "Household Income",
+       y = "Good/Bad Credit")
+#print(plt01)
+ainc.quantiles <- quantile(dat$household, probs = seq(0, 1, length = 11))
+plt02 <- plt01 + geom_vline(xintercept = ainc.quantiles, color = "grey")
+#print(plt02)
+bks <- ainc.quantiles
+bks[1] <- bks[1] - 0.1
+bks[length(bks)] <- bks[length(bks)] + 0.1
+dat$fainc <- cut(dat$household, breaks = bks)
+blr.ainc <- tapply(dat$BAD, dat$fainc, mean)
+xs <- (bks[-1] + bks[-length(bks)])/2
+plt03 <- plt02 + geom_point(data = data.frame(x = xs, y = blr.ainc), 
+                            aes(x = x, y = y),
+                            color = "red")
+#print(plt03)
+plt03 <- plt03 + geom_smooth(se = FALSE)
+print(plt03)
+```
+
+
+```{r plot-by-dob, echo = FALSE,warning=FALSE,message=FALSE}
+plt01 <- ggplot(dat) +
+  aes(x = DOB, y = BAD) +
+  geom_jitter(height = 0.02, shape = 1) +
+  labs(x = "Year of Birth",
+       y = "Good/Bad Credit")
+#print(plt01)
+ainc.quantiles <- quantile(dat$DOB, probs = seq(0, 1, length = 11))
+plt02 <- plt01 + geom_vline(xintercept = ainc.quantiles, color = "grey")
+#print(plt02)
+bks <- ainc.quantiles
+bks[1] <- bks[1] - 0.1
+bks[length(bks)] <- bks[length(bks)] + 0.1
+dat$fainc <- cut(dat$DOB, breaks = bks)
+blr.ainc <- tapply(dat$BAD, dat$fainc, mean)
+xs <- (bks[-1] + bks[-length(bks)])/2
+plt03 <- plt02 + geom_point(data = data.frame(x = xs, y = blr.ainc), 
+                            aes(x = x, y = y),
+                            color = "red")
+#print(plt03)
+plt03 <- plt03 + geom_smooth(se = FALSE)
+print(plt03)
+
+```
+
+```{r plot-by-value-of-home, echo = FALSE,warning=FALSE,message=FALSE}
+plt01 <- ggplot(dat) +
+  aes(x = DHVAL, y = BAD) +
+  geom_jitter(height = 0.02, shape = 1) +
+  labs(x = "Value of Home",
+       y = "Good/Bad Credit")
+#print(plt01)
+ainc.quantiles <- unique(quantile(dat$DHVAL, probs = seq(0, 1, length = 11)))
+plt02 <- plt01 + geom_vline(xintercept = ainc.quantiles, color = "grey")
+#print(plt02)
+bks <- ainc.quantiles
+bks[1] <- bks[1] - 0.1
+bks[length(bks)] <- bks[length(bks)] + 0.1
+dat$fainc <- cut(dat$DHVAL, breaks = bks)
+blr.ainc <- tapply(dat$BAD, dat$fainc, mean)
+xs <- (bks[-1] + bks[-length(bks)])/2
+plt03 <- plt02 + geom_point(data = data.frame(x = xs, y = blr.ainc), 
+                            aes(x = x, y = y),
+                            color = "red")
+#print(plt03)
+plt03 <- plt03 + geom_smooth(se = FALSE)
+print(plt03)
+
+```
+
+
+```{r plot-by-mortgage-balance-outstanding, echo = FALSE,warning=FALSE,message=FALSE}
+plt01 <- ggplot(dat) +
+  aes(x = DMORT, y = BAD) +
+  geom_jitter(height = 0.02, shape = 1) +
+  labs(x = "Mortgage Balance Outstanding",
+       y = "Good/Bad Credit")
+#print(plt01)
+ainc.quantiles <- unique(quantile(dat$DMORT, probs = seq(0, 1, length = 11)))
+plt02 <- plt01 + geom_vline(xintercept = ainc.quantiles, color = "grey")
+#print(plt02)
+bks <- ainc.quantiles
+bks[1] <- bks[1] - 0.1
+bks[length(bks)] <- bks[length(bks)] + 0.1
+dat$fainc <- cut(dat$DMORT, breaks = bks)
+blr.ainc <- tapply(dat$BAD, dat$fainc, mean)
+xs <- (bks[-1] + bks[-length(bks)])/2
+plt03 <- plt02 + geom_point(data = data.frame(x = xs, y = blr.ainc), 
+                            aes(x = x, y = y),
+                            color = "red")
+#print(plt03)
+plt03 <- plt03 + geom_smooth(se = FALSE)
+print(plt03)
+
+```
+
+```{r plot-by-doutcc, echo = FALSE,warning=FALSE,message=FALSE}
+plt01 <- ggplot(dat) +
+  aes(x = DOUTCC, y = BAD) +
+  geom_jitter(height = 0.02, shape = 1) +
+  labs(x = "Outgoings on Credit Cards",
+       y = "Good/Bad Credit")
+#print(plt01)
+ainc.quantiles <- unique(quantile(dat$DOUTCC, probs = seq(0, 1, length = 11)))
+plt02 <- plt01 + geom_vline(xintercept = ainc.quantiles, color = "grey")
+#print(plt02)
+bks <- ainc.quantiles
+bks[1] <- bks[1] - 0.1
+bks[length(bks)] <- bks[length(bks)] + 0.1
+dat$fainc <- cut(dat$DOUTCC, breaks = bks)
+blr.ainc <- tapply(dat$BAD, dat$fainc, mean)
+xs <- (bks[-1] + bks[-length(bks)])/2
+plt03 <- plt02 + geom_point(data = data.frame(x = xs, y = blr.ainc), 
+                            aes(x = x, y = y),
+                            color = "red")
+#print(plt03)
+plt03 <- plt03 + geom_smooth(se = FALSE)
+print(plt03)
+
+```
+
+
+
+
+
+
+
+
+
+
+
